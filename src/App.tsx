@@ -488,13 +488,13 @@ function AppContent() {
 
   return (
     <div 
-      className="h-screen bg-gray-100 overflow-hidden"
+      className="min-h-screen flex flex-col bg-gray-100 overflow-x-hidden"
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
     >
       {/* Header with Sign Out */}
-      <div className="bg-white border-b border-gray-200 px-4 py-2 flex justify-between items-center">
+      <div className="bg-white border-b border-gray-200 px-4 py-2 flex justify-between items-center sticky top-0 z-50">
         <h1 className="text-xl font-bold">Home Review</h1>
         <button
           onClick={() => signOut()}
@@ -505,92 +505,89 @@ function AppContent() {
       </div>
 
       {/* Main Content */}
-      <div className="flex h-full md:h-[calc(100vh-56px)]">
+      <div className="flex flex-1 relative h-[calc(100vh-56px)] md:h-[calc(100vh-56px)] overflow-y-auto">
         {/* Left Panel - Address List */}
-        <div className={`fixed md:relative w-full md:w-1/4 bg-white p-4 overflow-y-auto border-r border-gray-200 transition-transform duration-300 ease-in-out ${
+        <div className={`absolute md:relative w-full md:w-1/4 bg-white overflow-y-auto h-full border-r border-gray-200 transition-transform duration-300 ease-in-out ${
           activePanel === 'list' ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}>
-          <h2 className="text-xl font-bold mb-4">Saved Homes</h2>
-          <AddHomeForm onAddHome={addHome} />
-          <AddressList 
-            homes={homes} 
-            selectedHome={selectedHome} 
-            homeChecklists={homeChecklists}
-            checkIfMeetsCriteria={checkIfMeetsCriteria}
-            onSelectHome={(home) => {
-              setSelectedHome(home);
-              setActivePanel('details');
-            }}
-            homeImages={homeImages}
-          />
-        </div>
-
-        {/* Middle Panel - Home Details */}
-        <div className={`fixed md:relative w-full md:w-2/4 transition-transform duration-300 ease-in-out ${
-          activePanel === 'details' ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
-        }`}>
-          <div className="h-full overflow-y-auto bg-white">
-            {selectedHome ? (
-              <div className="flex flex-col h-full">
-                {/* Header */}
-                <div className="flex justify-between items-center p-4 border-b border-gray-200">
-                  <h2 className="text-xl font-bold">Home Details</h2>
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 overflow-y-auto">
-                  {/* Zillow Viewer */}
-                  <div className="border-b border-gray-200">
-                    <ZillowViewer 
-                      selectedHome={selectedHome}
-                      onUpdateStatus={handleUpdateStatus}
-                      onAddNote={handleAddNote}
-                      onUploadImage={handleUploadImage}
-                      onDeleteImage={handleDeleteImage}
-                      onSetPrimaryImage={handleSetPrimaryImage}
-                      statusHistory={statusHistory}
-                      notes={notes}
-                      images={selectedHome ? homeImages[selectedHome.id] || [] : []}
-                    />
-                  </div>
-
-                  {/* Basic Checklist (Criteria) */}
-                  <div className="p-4 bg-gray-50">
-                    <h3 className="text-lg font-semibold mb-4">Home Criteria Checklist</h3>
-                    {homeChecklists[selectedHome.id] ? (
-                      <ChecklistPanel 
-                        checklist={homeChecklists[selectedHome.id]} 
-                        onUpdateChecklist={(field, value) => updateChecklist(selectedHome.id, field, value)} 
-                      />
-                    ) : (
-                      <div className="text-center text-gray-500">
-                        Loading checklist...
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="p-4 text-center text-gray-500">
-                Select a home to view details
-              </div>
-            )}
+          <div className="p-4">
+            <h2 className="text-xl font-bold mb-4">Saved Homes</h2>
+            <AddHomeForm onAddHome={addHome} />
+            <AddressList 
+              homes={homes} 
+              selectedHome={selectedHome} 
+              homeChecklists={homeChecklists}
+              checkIfMeetsCriteria={checkIfMeetsCriteria}
+              onSelectHome={(home) => {
+                setSelectedHome(home);
+                setActivePanel('details');
+              }}
+              homeImages={homeImages}
+            />
           </div>
         </div>
 
+        {/* Middle Panel - Home Details */}
+        <div className={`absolute md:relative w-full md:w-2/4 h-full overflow-y-auto bg-white transition-transform duration-300 ease-in-out ${
+          activePanel === 'details' ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
+        }`}>
+          {selectedHome ? (
+            <div className="flex flex-col h-full">
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto">
+                {/* Zillow Viewer */}
+                <div className="border-b border-gray-200">
+                  <ZillowViewer 
+                    selectedHome={selectedHome}
+                    onUpdateStatus={handleUpdateStatus}
+                    onAddNote={handleAddNote}
+                    onUploadImage={handleUploadImage}
+                    onDeleteImage={handleDeleteImage}
+                    onSetPrimaryImage={handleSetPrimaryImage}
+                    statusHistory={statusHistory}
+                    notes={notes}
+                    images={selectedHome ? homeImages[selectedHome.id] || [] : []}
+                  />
+                </div>
+
+                {/* Basic Checklist (Criteria) */}
+                <div className="p-4 bg-gray-50">
+                  <h3 className="text-lg font-semibold mb-4">Home Criteria Checklist</h3>
+                  {homeChecklists[selectedHome.id] ? (
+                    <ChecklistPanel 
+                      checklist={homeChecklists[selectedHome.id]} 
+                      onUpdateChecklist={(field, value) => updateChecklist(selectedHome.id, field, value)} 
+                    />
+                  ) : (
+                    <div className="text-center text-gray-500">
+                      Loading checklist...
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="p-4 text-center text-gray-500">
+              Select a home to view details
+            </div>
+          )}
+        </div>
+
         {/* Right Panel - Detailed Evaluation */}
-        <div className={`fixed md:relative w-full md:w-1/4 bg-white p-4 overflow-y-auto border-l border-gray-200 transition-transform duration-300 ease-in-out ${
+        <div className={`absolute md:relative w-full md:w-1/4 bg-white h-full overflow-y-auto border-l border-gray-200 transition-transform duration-300 ease-in-out ${
           activePanel === 'checklist' ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
         }`}>
-          <h2 className="text-xl font-bold mb-4">Detailed Evaluation</h2>
-          {selectedHome ? (
-            <HomeEvaluationChecklist
-              home={selectedHome}
-              onSave={handleSaveEvaluation}
-            />
-          ) : (
-            <p>Select a home to start evaluation</p>
-          )}
+          <div className="p-4">
+            <h2 className="text-xl font-bold mb-4">Detailed Evaluation</h2>
+            {selectedHome ? (
+              <HomeEvaluationChecklist
+                home={selectedHome}
+                onSave={handleSaveEvaluation}
+              />
+            ) : (
+              <p>Select a home to start evaluation</p>
+            )}
+          </div>
         </div>
       </div>
     </div>

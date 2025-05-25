@@ -46,8 +46,11 @@ export interface Home {
   zillow_url: string;
   asking_price: number;
   agent_name?: string;
-  current_status: Status;
+  current_status?: Status;
+  user_id: string;
+  youtube_link?: string;
   created_at: string;
+  updated_at: string;
 }
 
 export interface HomeChecklist {
@@ -95,7 +98,7 @@ export interface HomeBasicSystems {
   home_id: string;
   roof_year: string;
   paint_condition: 'Good' | 'Fair' | 'Poor';
-  hvac_type: 'Central' | 'Window' | 'Mini-Split' | 'None';
+  hvac_type: ('Central' | 'Window' | 'Mini-Split')[];
   hvac_year: string;
   ac_unit_year_month: string;
   heating_type: 'Gas' | 'Electric';
@@ -132,7 +135,7 @@ export interface HomeStructure {
 export interface HomeInterior {
   id?: string;
   home_id: string;
-  flooring_type: 'Hardwood' | 'Carpet' | 'Tile' | 'Laminate';
+  flooring_type: ('Hardwood' | 'Carpet' | 'Tile' | 'Laminate')[];
   hardwood_condition: 'Good' | 'Fair' | 'Poor';
   ceiling_issues: boolean;
   cabinet_condition: 'Good' | 'Fair' | 'Poor';
@@ -183,4 +186,20 @@ export interface HomeEvaluationData {
   interior: Omit<HomeInterior, 'id' | 'created_at' | 'updated_at' | 'home_id'>;
   bedrooms: Record<string, Omit<HomeBedroom, 'id' | 'created_at' | 'updated_at' | 'home_id' | 'bedroom_name'>>;
   siteVicinity: Omit<HomeSiteVicinity, 'id' | 'created_at' | 'updated_at' | 'home_id'>;
+  youtube_link?: string;
+}
+
+export interface BedroomData {
+  adequate_size: boolean;
+  closet_present: boolean;
+  entry_door_present: boolean;
+  egress_present: boolean;
+  egress_type: 'Window' | 'Door';
+  window_size_meets_code: boolean;
+  window_sill_height_ok: boolean;
+  smoke_detector_present: boolean;
+  co_detector_present: boolean;
+  gas_appliance_present: boolean;
+  accessed_through_another: boolean;
+  connects_to_garage: boolean;
 } 

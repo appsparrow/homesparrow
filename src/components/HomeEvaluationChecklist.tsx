@@ -3,12 +3,12 @@ import type { Home } from '../lib/supabase';
 
 interface HomeEvaluationChecklistProps {
   home: Home;
-  onSave: (data: HomeEvaluationData) => void;
+  onSave: (data: HomeEvaluationData) => Promise<void>;
   initialData?: HomeEvaluationData;
 }
 
 type Condition = 'Good' | 'Fair' | 'Poor';
-type HvacType = 'Central' | 'Window' | 'Mini-Split' | 'None';
+type HvacType = 'Central' | 'Window' | 'Mini-Split';
 type HeatingType = 'Gas' | 'Electric';
 type HotWaterTest = 'Instant' | 'Delay' | 'None';
 type LightsWorking = 'All' | 'Some' | 'None';
@@ -19,7 +19,7 @@ type EvaluationSection = 'basicSystems' | 'structure' | 'interior' | 'siteVicini
 interface HomeBasicSystems {
   roof_year: string;
   paint_condition: Condition;
-  hvac_type: HvacType;
+  hvac_type: HvacType[];
   hvac_year: string;
   ac_unit_year_month: string;
   heating_type: HeatingType;
@@ -36,7 +36,6 @@ interface HomeBasicSystems {
   co_detectors_installed: boolean;
   co_detectors_working: boolean;
   fire_extinguisher_present: boolean;
-  [key: string]: string | boolean | Condition | HvacType | HeatingType | HotWaterTest | LightsWorking;
 }
 
 interface HomeStructure {
@@ -50,13 +49,12 @@ interface HomeStructure {
 }
 
 interface HomeInterior {
-  flooring_type: FlooringType;
+  flooring_type: FlooringType[];
   hardwood_condition: Condition;
   ceiling_issues: boolean;
   cabinet_condition: Condition;
   appliances_present: string[];
   fixtures_operational: boolean;
-  [key: string]: string | boolean | Condition | FlooringType | string[];
 }
 
 interface HomeSiteVicinity {
@@ -76,6 +74,7 @@ interface BedroomData {
   closet_present: boolean;
   entry_door_present: boolean;
   egress_present: boolean;
+  egress_type: 'Window' | 'Door';
   window_size_meets_code: boolean;
   window_sill_height_ok: boolean;
   smoke_detector_present: boolean;
@@ -91,6 +90,7 @@ interface HomeEvaluationData {
   interior: HomeInterior;
   siteVicinity: HomeSiteVicinity;
   bedrooms: Record<string, BedroomData>;
+  youtube_link?: string;
 }
 
 type SectionData = {
@@ -104,7 +104,7 @@ const defaultEvaluationData: HomeEvaluationData = {
   basicSystems: {
     roof_year: '',
     paint_condition: 'Good',
-    hvac_type: 'None',
+    hvac_type: [],
     hvac_year: '',
     ac_unit_year_month: '',
     heating_type: 'Electric',
@@ -131,7 +131,7 @@ const defaultEvaluationData: HomeEvaluationData = {
     doors_locking_properly: false
   },
   interior: {
-    flooring_type: 'Carpet',
+    flooring_type: [],
     hardwood_condition: 'Good',
     ceiling_issues: false,
     cabinet_condition: 'Good',
@@ -160,6 +160,14 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
     siteVicinity: {}
   });
   const [newBedroomName, setNewBedroomName] = useState('');
+  const [youtubeLink, setYoutubeLink] = useState(home.youtube_link || '');
+  const [isEditingYoutube, setIsEditingYoutube] = useState(false);
+  const [tempYoutubeLink, setTempYoutubeLink] = useState(youtubeLink);
+
+  useEffect(() => {
+    setTempYoutubeLink(home.youtube_link || '');
+    setIsEditingYoutube(false);
+  }, [home]);
 
   useEffect(() => {
     if (initialData) {
@@ -190,10 +198,27 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
       const sections: EvaluationSection[] = ['basicSystems', 'structure', 'interior', 'siteVicinity'];
       sections.forEach(section => {
         newSelectedFields[section] = {};
-        const fields = initialData[section] as SectionData[typeof section];
+        const fields = initialData[section] as any;
         if (fields) {
           Object.entries(fields).forEach(([field, value]) => {
-            if (value !== (defaultEvaluationData[section] as SectionData[typeof section])[field]) {
+            let defaultSection: any;
+            switch (section) {
+              case 'basicSystems':
+                defaultSection = defaultEvaluationData.basicSystems;
+                break;
+              case 'structure':
+                defaultSection = defaultEvaluationData.structure;
+                break;
+              case 'interior':
+                defaultSection = defaultEvaluationData.interior;
+                break;
+              case 'siteVicinity':
+                defaultSection = defaultEvaluationData.siteVicinity;
+                break;
+              default:
+                defaultSection = {};
+            }
+            if (value !== defaultSection[field]) {
               newSelectedFields[section][field] = true;
             }
           });
@@ -213,13 +238,15 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
     }));
 
     setEvaluationData(prev => {
-      const currentValue = (prev[section] as SectionData[typeof section])[field];
+      let sectionObj = prev[section] as Record<string, any>;
+      if (!(field in sectionObj)) return prev;
+      const currentValue = sectionObj[field];
       // For boolean values, toggle them
       if (typeof currentValue === 'boolean') {
         return {
           ...prev,
           [section]: {
-            ...prev[section],
+            ...sectionObj,
             [field]: !currentValue
           }
         };
@@ -228,8 +255,8 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
       return {
         ...prev,
         [section]: {
-          ...prev[section],
-          [field]: currentValue === value ? (defaultEvaluationData[section] as SectionData[typeof section])[field] : value
+          ...sectionObj,
+          [field]: currentValue === value ? (defaultEvaluationData[section] as Record<string, any>)[field] : value
         }
       };
     });
@@ -325,7 +352,7 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
 
   const renderHvacTypeButtons = (currentValue: HvacType) => (
     <div className="flex flex-wrap gap-2">
-      {(['Central', 'Window', 'Mini-Split', 'None'] as HvacType[]).map(type => (
+      {(['Central', 'Window', 'Mini-Split'] as HvacType[]).map(type => (
         <button
           key={type}
           type="button"
@@ -410,34 +437,112 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
     />
   );
 
+  const HVAC_OPTIONS: HvacType[] = ['Central', 'Window', 'Mini-Split'];
+  const FLOORING_OPTIONS: FlooringType[] = ['Hardwood', 'Carpet', 'Tile', 'Laminate'];
+
+  const handleHvacChange = (option: HvacType) => {
+    setEvaluationData(prev => {
+      const current = Array.isArray(prev.basicSystems.hvac_type) ? prev.basicSystems.hvac_type : [];
+      const exists = current.includes(option);
+      return {
+        ...prev,
+        basicSystems: {
+          ...prev.basicSystems,
+          hvac_type: exists ? current.filter(o => o !== option) : [...current, option]
+        }
+      };
+    });
+  };
+
+  const handleFlooringChange = (option: FlooringType) => {
+    setEvaluationData(prev => {
+      const current = Array.isArray(prev.interior.flooring_type) ? prev.interior.flooring_type : [];
+      const exists = current.includes(option);
+      return {
+        ...prev,
+        interior: {
+          ...prev.interior,
+          flooring_type: exists ? current.filter(o => o !== option) : [...current, option]
+        }
+      };
+    });
+  };
+
+  const renderHvacMultiselect = (current: HvacType[]) => (
+    <div className="flex flex-wrap gap-2">
+      {HVAC_OPTIONS.map(option => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => handleHvacChange(option)}
+          className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+            current.includes(option)
+              ? 'bg-blue-100 text-blue-800 border-2 border-blue-500'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+
+  const renderFlooringMultiselect = (current: FlooringType[]) => (
+    <div className="flex flex-wrap gap-2">
+      {FLOORING_OPTIONS.map(option => (
+        <button
+          key={option}
+          type="button"
+          onClick={() => handleFlooringChange(option)}
+          className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+            current.includes(option)
+              ? 'bg-blue-100 text-blue-800 border-2 border-blue-500'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+
   const renderSection = (title: string, fields: Record<string, any>, section: EvaluationSection) => (
     <div className="mb-8">
-      <h3 className="text-lg font-semibold mb-4">{title}</h3>
+      <h3 className="text-lg font-semibold mb-4">
+        {title.replace('HVAC Type', 'HVAC').replace('Flooring Type', 'Flooring').replace('Type', '').replace('type', '')}
+      </h3>
       <div className="space-y-4">
-        {Object.entries(fields).map(([field, value]) => (
-          <div key={field} className="flex items-center justify-between">
-            <label className="text-gray-700">
-              {field.replace(/_/g, ' ').replace(/^./, str => str.toUpperCase())}
-            </label>
-            {typeof value === 'boolean' ? (
-              renderYesNoButtons(section, field, value)
-            ) : field === 'flooring_type' ? (
-              renderFlooringButtons(value as FlooringType)
-            ) : field === 'hvac_type' ? (
-              renderHvacTypeButtons(value as HvacType)
-            ) : field === 'heating_type' ? (
-              renderHeatingTypeButtons(value as HeatingType)
-            ) : field === 'hot_water_test' ? (
-              renderHotWaterTestButtons(value as HotWaterTest)
-            ) : field === 'lights_working' ? (
-              renderLightsWorkingButtons(value as LightsWorking)
-            ) : typeof value === 'string' && (field.includes('condition') || field.includes('status')) ? (
-              renderConditionButtons(section, field, value as Condition)
-            ) : typeof value === 'string' ? (
-              renderTextInput(section, field, value)
-            ) : null}
-          </div>
-        ))}
+        {Object.entries(fields)
+          .filter(([field]) => !['id', 'home_id', 'created_at', 'updated_at'].includes(field))
+          .map(([field]) => {
+            const value = (fields as Record<string, any>)[field];
+            // Custom label for HVAC and Flooring
+            let label = field.replace(/_/g, ' ').replace(/^./, str => str.toUpperCase());
+            if (field === 'hvac_type') label = 'HVAC';
+            if (field === 'flooring_type') label = 'Flooring';
+            return (
+              <div key={field} className="flex items-center justify-between">
+                <label className="text-gray-700">{label}</label>
+                {field === 'hvac_type' ? (
+                  renderHvacMultiselect(Array.isArray(value) ? value : [])
+                ) : field === 'flooring_type' ? (
+                  renderFlooringMultiselect(Array.isArray(value) ? value : [])
+                ) : typeof value === 'boolean' ? (
+                  renderYesNoButtons(section, field, value)
+                ) : field === 'heating_type' ? (
+                  renderHeatingTypeButtons(value as HeatingType)
+                ) : field === 'hot_water_test' ? (
+                  renderHotWaterTestButtons(value as HotWaterTest)
+                ) : field === 'lights_working' ? (
+                  renderLightsWorkingButtons(value as LightsWorking)
+                ) : typeof value === 'string' && (field.includes('condition') || field.includes('status')) ? (
+                  renderConditionButtons(section, field, value as Condition)
+                ) : typeof value === 'string' ? (
+                  renderTextInput(section, field, value)
+                ) : null}
+              </div>
+            );
+          })}
       </div>
     </div>
   );
@@ -449,7 +554,24 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
     sections.forEach(section => {
       Object.keys(selectedFields[section]).forEach(field => {
         if (!selectedFields[section][field]) {
-          (saveData[section] as SectionData[typeof section])[field] = (defaultEvaluationData[section] as SectionData[typeof section])[field];
+          let defaultSection: any;
+          switch (section) {
+            case 'basicSystems':
+              defaultSection = defaultEvaluationData.basicSystems;
+              break;
+            case 'structure':
+              defaultSection = defaultEvaluationData.structure;
+              break;
+            case 'interior':
+              defaultSection = defaultEvaluationData.interior;
+              break;
+            case 'siteVicinity':
+              defaultSection = defaultEvaluationData.siteVicinity;
+              break;
+            default:
+              defaultSection = {};
+          }
+          (saveData[section] as any)[field] = defaultSection[field];
         }
       });
     });
@@ -532,7 +654,7 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
     const systemChecks = [
       {
         label: 'Air conditioning provided',
-        passed: evaluationData.basicSystems.hvac_type !== 'None'
+        passed: evaluationData.basicSystems.hvac_type.length > 0
       },
       {
         label: 'CO detectors where needed',
@@ -603,6 +725,7 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
           closet_present: false,
           entry_door_present: false,
           egress_present: false,
+          egress_type: 'Window',
           window_size_meets_code: false,
           window_sill_height_ok: false,
           smoke_detector_present: false,
@@ -640,10 +763,20 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
     }));
   };
 
+  const handleSaveYoutubeLink = async () => {
+    setYoutubeLink(tempYoutubeLink);
+    setIsEditingYoutube(false);
+    await onSave({ ...evaluationData, youtube_link: tempYoutubeLink });
+  };
+
+  const handleCancelYoutubeEdit = () => {
+    setTempYoutubeLink(youtubeLink);
+    setIsEditingYoutube(false);
+  };
+
   const renderBedroomSection = () => (
     <div className="mb-8">
       <h3 className="text-lg font-semibold mb-4">Bedrooms</h3>
-      
       <div className="flex gap-2 mb-4">
         <input
           type="text"
@@ -659,7 +792,6 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
           Add Bedroom
         </button>
       </div>
-
       {Object.entries(evaluationData.bedrooms).map(([bedroomName, data]) => (
         <div key={bedroomName} className="mb-6 p-4 border rounded-lg">
           <div className="flex justify-between items-center mb-4">
@@ -671,7 +803,6 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
               Remove
             </button>
           </div>
-
           <div className="space-y-4">
             {Object.entries(data).map(([field, value]) => (
               <div key={field} className="flex items-center justify-between">
@@ -712,6 +843,64 @@ const HomeEvaluationChecklist = ({ home, onSave, initialData }: HomeEvaluationCh
 
   return (
     <div className="p-4 space-y-6">
+      <div></div> {/* Empty for alignment */}
+      {/* YouTube Link Section */}
+      <div className="border-b border-gray-200 pb-4">
+        <h3 className="text-lg font-semibold mb-4">Evaluation Video</h3>
+        {/* If no link and not editing, show Add button */}
+        {!youtubeLink && !isEditingYoutube && (
+          <button
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+            onClick={() => setIsEditingYoutube(true)}
+          >
+            Add Video Link
+          </button>
+        )}
+        {/* If editing, show input and Save/Cancel */}
+        {isEditingYoutube && (
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={tempYoutubeLink}
+              onChange={e => setTempYoutubeLink(e.target.value)}
+              placeholder="Enter YouTube video URL"
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-md"
+            />
+            <button
+              onClick={handleSaveYoutubeLink}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+            >
+              Save
+            </button>
+            <button
+              onClick={handleCancelYoutubeEdit}
+              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        {/* If link exists and not editing, show Watch and Edit */}
+        {youtubeLink && !isEditingYoutube && (
+          <div className="flex items-center gap-4 mt-2">
+            <a
+              href={youtubeLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800"
+            >
+              Watch Evaluation Video
+            </a>
+            <button
+              onClick={() => setIsEditingYoutube(true)}
+              className="px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+            >
+              Edit
+            </button>
+          </div>
+        )}
+      </div>
+
       {renderSection('Basic Systems', evaluationData.basicSystems, 'basicSystems')}
       {renderSection('Structure', evaluationData.structure, 'structure')}
       {renderSection('Interior', evaluationData.interior, 'interior')}

@@ -15,11 +15,12 @@ import type {
 } from './lib/supabase'
 import AddHomeForm from './components/AddHomeForm'
 import AddressList from './components/AddressList'
-import ZillowViewer from './components/ZillowViewer'
+import HomeDetailsPanel from './components/HomeDetailsPanel'
 import ChecklistPanel from './components/ChecklistPanel'
 import HomeEvaluationChecklist from './components/HomeEvaluationChecklist'
 import { AuthProvider, useAuth } from './components/AuthProvider'
 import LoginPage from './components/LoginPage'
+import StickyAddressBar from './components/StickyAddressBar'
 
 interface HomeImage {
   id: string;
@@ -37,7 +38,7 @@ function AppContent() {
   const [statusHistory, setStatusHistory] = useState<StatusUpdate[]>([])
   const [notes, setNotes] = useState<HomeNote[]>([])
   const [homeImages, setHomeImages] = useState<Record<string, HomeImage[]>>({})
-  const [activePanel, setActivePanel] = useState<'list' | 'details' | 'checklist'>('list')
+  const [activePanel, setActivePanel] = useState<'list' | 'details' | 'evaluation'>('list')
   const [touchStart, setTouchStart] = useState<number | null>(null)
   const [touchEnd, setTouchEnd] = useState<number | null>(null)
   const [activeMiddlePanel, setActiveMiddlePanel] = useState<'zillow' | 'evaluation'>('zillow')
@@ -65,10 +66,10 @@ function AppContent() {
 
     if (isLeftSwipe) {
       if (activePanel === 'list') setActivePanel('details')
-      else if (activePanel === 'details') setActivePanel('checklist')
+      else if (activePanel === 'details') setActivePanel('evaluation')
     }
     if (isRightSwipe) {
-      if (activePanel === 'checklist') setActivePanel('details')
+      if (activePanel === 'evaluation') setActivePanel('details')
       else if (activePanel === 'details') setActivePanel('list')
     }
   }
@@ -244,25 +245,63 @@ function AppContent() {
     }
   }
 
-  async function handleUpdateStatus(status: Status, note?: string, offerAmount?: number) {
-    if (!selectedHome) return
+  async function handleUpdateStatus(status: Status, note?: string, offerAmount?: number, date?: string) {
+    if (!selectedHome) return;
+
+    // Check if status already exists for this home
+    const { data: existing, error: fetchError } = await supabase
+      .from('status_updates')
+      .select('*')
+      .eq('home_id', selectedHome.id)
+      .eq('status', status)
+      .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') {
+      console.error('Error checking status:', fetchError);
+      return;
+    }
 
     const statusUpdate = {
       home_id: selectedHome.id,
       status,
       notes: note,
-      offer_amount: offerAmount
+      offer_amount: offerAmount,
+      ...(date ? { date: new Date(date).toISOString() } : {})
+    };
+
+    let upsertError;
+    if (existing) {
+      // Update existing
+      const { error } = await supabase
+        .from('status_updates')
+        .update(statusUpdate)
+        .eq('id', existing.id);
+      upsertError = error;
+    } else {
+      // Insert new
+      const { error } = await supabase
+        .from('status_updates')
+        .insert(statusUpdate);
+      upsertError = error;
     }
 
+    if (upsertError) {
+      console.error('Error updating status:', upsertError);
+    } else {
+      fetchStatusHistory(selectedHome.id);
+      fetchHomes(); // Refresh homes to get updated status
+    }
+  }
+
+  async function handleDeleteStatusHistory(id: string) {
     const { error } = await supabase
       .from('status_updates')
-      .insert(statusUpdate)
-
+      .delete()
+      .eq('id', id);
     if (error) {
-      console.error('Error updating status:', error)
-    } else {
-      fetchStatusHistory(selectedHome.id)
-      fetchHomes() // Refresh homes to get updated status
+      console.error('Error deleting status history:', error);
+    } else if (selectedHome) {
+      fetchStatusHistory(selectedHome.id);
     }
   }
 
@@ -287,17 +326,23 @@ function AppContent() {
   }
 
   async function handleUpdateHome(data: Partial<Home>) {
-    if (!selectedHome) return
+    if (!selectedHome) return;
+    
+    try {
+      const { error } = await supabase
+        .from('homes')
+        .update(data)
+        .eq('id', selectedHome.id);
 
-    const { error } = await supabase
-      .from('homes')
-      .update(data)
-      .eq('id', selectedHome.id)
+      if (error) throw error;
 
-    if (error) {
-      console.error('Error updating home:', error)
-    } else {
-      fetchHomes()
+      // Update local state
+      setHomes(homes.map(home => 
+        home.id === selectedHome.id ? { ...home, ...data } : home
+      ));
+      setSelectedHome(prev => prev ? { ...prev, ...data } : prev);
+    } catch (error) {
+      console.error('Error updating home:', error);
     }
   }
 
@@ -477,6 +522,15 @@ function AppContent() {
         if (bedroomError) throw bedroomError;
       }
 
+      // Save YouTube link to homes table if present
+      if (evaluationData.youtube_link !== undefined) {
+        const { error: youtubeError } = await supabase
+          .from('homes')
+          .update({ youtube_link: evaluationData.youtube_link })
+          .eq('id', selectedHome.id);
+        if (youtubeError) throw youtubeError;
+      }
+
       alert('Evaluation saved successfully!');
     } catch (error) {
       console.error('Error saving evaluation:', error);
@@ -564,167 +618,241 @@ function AppContent() {
     }
   }
 
+  // When a home is selected in the Homes tab, go to Details tab on mobile
+  function handleSelectHome(home: Home) {
+    setSelectedHome(home);
+    setShowActions(false); // Close any open menus
+    if (window.innerWidth < 768) setActivePanel('details');
+    // Reset scroll position for details/evaluation panels
+    setTimeout(() => {
+      document.querySelectorAll('.details-scroll, .evaluation-scroll').forEach(el => {
+        el.scrollTop = 0;
+      });
+    }, 0);
+  }
+
   if (!user) {
     return <LoginPage />;
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-100">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-100">
       {/* Header - Fixed at top */}
-      <header className="bg-white border-b border-gray-200 px-4 py-2 flex justify-between items-center">
-        <h1 className="text-xl font-bold">Home Review</h1>
-        <button
-          onClick={() => signOut()}
-          className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md"
-        >
-          Sign Out
-        </button>
+      <header className="fixed top-0 left-0 right-0 bg-white border-b border-gray-200 px-4 py-2 flex flex-col z-50">
+        <div className="flex justify-between items-center">
+          <h1 className="text-xl font-bold">Home Review</h1>
+          <button
+            onClick={() => signOut()}
+            className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md"
+          >
+            Sign Out
+          </button>
+        </div>
+        {((activePanel === 'details' || activePanel === 'evaluation') && selectedHome) && (
+          <div className="w-full text-base font-medium text-gray-700 whitespace-normal break-words mt-1">
+            {selectedHome.address}
+          </div>
+        )}
       </header>
 
-      {/* Main Content - Scrollable */}
-      <main className="flex-1 overflow-hidden relative">
-        {/* Left Panel - Address List */}
-        <div 
-          className={`absolute inset-0 md:relative md:w-1/4 bg-white overflow-y-auto border-r border-gray-200 transition-transform duration-300 ease-in-out ${
-            activePanel === 'list' ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-          }`}
-        >
-          <div className="p-4 pb-20 md:pb-4">
-            <h2 className="text-xl font-bold mb-4">Saved Homes</h2>
-            <AddHomeForm onAddHome={addHome} />
-            <AddressList 
-              homes={homes} 
-              selectedHome={selectedHome} 
-              homeChecklists={homeChecklists}
-              checkIfMeetsCriteria={checkIfMeetsCriteria}
-              onSelectHome={(home) => {
-                setSelectedHome(home);
-                setActivePanel('details');
-              }}
-              homeImages={homeImages}
-            />
+      {/* Main Content */}
+      <div className="flex-1 relative overflow-hidden pt-16 pb-20">
+        <div className="hidden md:flex h-full">
+          {/* Homes Panel (Left) */}
+          <div className="w-1/4 bg-white overflow-y-auto border-r border-gray-200 pt-0 flex-shrink-0">
+            <div className="p-4">
+              <AddHomeForm onAddHome={addHome} />
+              <AddressList
+                homes={homes}
+                selectedHome={selectedHome}
+                onSelectHome={handleSelectHome}
+                homeChecklists={homeChecklists}
+                homeImages={homeImages}
+                checkIfMeetsCriteria={checkIfMeetsCriteria}
+              />
+            </div>
           </div>
-        </div>
-
-        {/* Middle Panel - Home Details */}
-        <div 
-          className={`absolute inset-0 md:relative md:w-2/4 bg-white overflow-y-auto transition-transform duration-300 ease-in-out ${
-            activePanel === 'details' ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
-          }`}
-        >
-          <div className="pb-20 md:pb-4">
+          {/* Details Panel (Center) */}
+          <div className="w-1/2 bg-white overflow-y-auto border-x border-gray-200 pt-0 flex-shrink-0 details-scroll">
             {selectedHome ? (
-              <>
-                {/* Sticky Address Header */}
-                <div className="sticky top-0 bg-white border-b border-gray-200 p-3 shadow-sm z-10">
-                  <h2 className="text-lg font-semibold truncate">{selectedHome.address}</h2>
-                </div>
-
-                {/* Zillow Viewer */}
-                <div className="border-b border-gray-200">
-                  <ZillowViewer 
-                    selectedHome={selectedHome}
-                    onUpdateStatus={handleUpdateStatus}
-                    onAddNote={handleAddNote}
-                    onUploadImage={handleUploadImage}
-                    onDeleteImage={handleDeleteImage}
-                    onSetPrimaryImage={handleSetPrimaryImage}
-                    statusHistory={statusHistory}
-                    notes={notes}
-                    images={selectedHome ? homeImages[selectedHome.id] || [] : []}
-                  />
-                </div>
-
-                {/* Basic Checklist (Criteria) */}
-                <div className="p-4 bg-gray-50">
-                  <h3 className="text-lg font-semibold mb-4">Home Criteria Checklist</h3>
-                  {homeChecklists[selectedHome.id] ? (
-                    <ChecklistPanel 
-                      checklist={homeChecklists[selectedHome.id]} 
-                      onUpdateChecklist={(field, value) => updateChecklist(selectedHome.id, field, value)} 
+              <div className="h-full flex flex-col">
+                <div className="flex-1 overflow-y-auto pb-20">
+                  <div className="p-4">
+                    <HomeDetailsPanel
+                      selectedHome={selectedHome}
+                      onUpdateStatus={handleUpdateStatus}
+                      onAddNote={handleAddNote}
+                      onUploadImage={handleUploadImage}
+                      onDeleteImage={handleDeleteImage}
+                      onSetPrimaryImage={handleSetPrimaryImage}
+                      onUpdateHome={handleUpdateHome}
+                      statusHistory={statusHistory}
+                      notes={notes}
+                      images={homeImages[selectedHome.id] || []}
+                      onDeleteStatusHistory={handleDeleteStatusHistory}
                     />
-                  ) : (
-                    <div className="text-center text-gray-500">
-                      Loading checklist...
+                    <div className="mt-6 bg-gray-50 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold mb-4">Home Criteria Checklist</h3>
+                      {homeChecklists[selectedHome.id] ? (
+                        <ChecklistPanel
+                          checklist={homeChecklists[selectedHome.id]}
+                          onUpdateChecklist={(field, value) => updateChecklist(selectedHome.id, field, value)}
+                        />
+                      ) : (
+                        <div className="text-center text-gray-500">
+                          Loading checklist...
+                        </div>
+                      )}
                     </div>
-                  )}
+                    <div className="w-full flex justify-center mt-8 mb-8">
+                      <button
+                        onClick={handleDeleteHome}
+                        className="w-full max-w-xs px-4 py-3 bg-red-600 text-white rounded-md font-semibold shadow hover:bg-red-700 transition"
+                      >
+                        Delete Home
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </>
+              </div>
             ) : (
-              <div className="p-4 text-center text-gray-500">
+              <div className="h-full flex items-center justify-center text-gray-500">
                 Select a home to view details
               </div>
             )}
           </div>
-        </div>
-
-        {/* Right Panel - Detailed Evaluation */}
-        <div 
-          className={`absolute inset-0 md:relative md:w-1/4 bg-white overflow-y-auto border-l border-gray-200 transition-transform duration-300 ease-in-out ${
-            activePanel === 'checklist' ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
-          }`}
-        >
-          <div className="pb-20 md:pb-4">
-            {selectedHome ? (
-              <>
-                {/* Sticky Address Header */}
-                <div className="sticky top-0 bg-white border-b border-gray-200 p-3 shadow-sm z-10">
-                  <h2 className="text-lg font-semibold truncate">{selectedHome.address}</h2>
+          {/* Evaluate Panel (Right) */}
+          <div className="w-1/4 bg-white overflow-y-auto border-l border-gray-200 pt-0 flex-shrink-0 evaluation-scroll">
+            {selectedHome && (
+              <div className="h-full flex flex-col">
+                <div className="flex-1 overflow-y-auto">
+                  <div className="pb-20">
+                    <HomeEvaluationChecklist
+                      key={selectedHome.id}
+                      home={selectedHome}
+                      onSave={handleSaveEvaluation}
+                      initialData={evaluationData[selectedHome.id]}
+                    />
+                    <div className="w-full flex justify-center mt-8 mb-8">
+                      <button
+                        onClick={handleDeleteHome}
+                        className="w-full max-w-xs px-4 py-3 bg-red-600 text-white rounded-md font-semibold shadow hover:bg-red-700 transition"
+                      >
+                        Delete Home
+                      </button>
+                    </div>
+                  </div>
                 </div>
-
-                <div className="p-4">
-                  <h2 className="text-xl font-bold mb-4">Detailed Evaluation</h2>
-                  <HomeEvaluationChecklist
-                    home={selectedHome}
-                    onSave={handleSaveEvaluation}
-                    initialData={evaluationData[selectedHome.id]}
-                  />
-                </div>
-              </>
-            ) : (
-              <div className="p-4">
-                <h2 className="text-xl font-bold mb-4">Detailed Evaluation</h2>
-                <p>Select a home to start evaluation</p>
               </div>
             )}
           </div>
         </div>
-      </main>
+        {/* Mobile: Only show one panel at a time */}
+        <div className="md:hidden h-full">
+          {/* Homes Panel */}
+          <div className={`${activePanel === 'list' ? 'block' : 'hidden'} h-full`}> 
+            <div className="p-4">
+              <AddHomeForm onAddHome={addHome} />
+              <AddressList
+                homes={homes}
+                selectedHome={selectedHome}
+                onSelectHome={handleSelectHome}
+                homeChecklists={homeChecklists}
+                homeImages={homeImages}
+                checkIfMeetsCriteria={checkIfMeetsCriteria}
+              />
+            </div>
+          </div>
+          {/* Details Panel */}
+          <div className={`${activePanel === 'details' ? 'block' : 'hidden'} h-full`}>
+            {selectedHome ? (
+              <div className="h-full flex flex-col">
+                <div className="flex-1 overflow-y-auto pb-20">
+                  <div className="p-4">
+                    <HomeDetailsPanel
+                      selectedHome={selectedHome}
+                      onUpdateStatus={handleUpdateStatus}
+                      onAddNote={handleAddNote}
+                      onUploadImage={handleUploadImage}
+                      onDeleteImage={handleDeleteImage}
+                      onSetPrimaryImage={handleSetPrimaryImage}
+                      onUpdateHome={handleUpdateHome}
+                      statusHistory={statusHistory}
+                      notes={notes}
+                      images={homeImages[selectedHome.id] || []}
+                      onDeleteStatusHistory={handleDeleteStatusHistory}
+                    />
+                    <div className="mt-6 bg-gray-50 rounded-lg p-4">
+                      <h3 className="text-lg font-semibold mb-4">Home Criteria Checklist</h3>
+                      {homeChecklists[selectedHome.id] ? (
+                        <ChecklistPanel
+                          checklist={homeChecklists[selectedHome.id]}
+                          onUpdateChecklist={(field, value) => updateChecklist(selectedHome.id, field, value)}
+                        />
+                      ) : (
+                        <div className="text-center text-gray-500">
+                          Loading checklist...
+                        </div>
+                      )}
+                    </div>
+                    <div className="w-full flex justify-center mt-8 mb-8">
+                      <button
+                        onClick={handleDeleteHome}
+                        className="w-full max-w-xs px-4 py-3 bg-red-600 text-white rounded-md font-semibold shadow hover:bg-red-700 transition"
+                      >
+                        Delete Home
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="h-full flex items-center justify-center text-gray-500">
+                Select a home to view details
+              </div>
+            )}
+          </div>
+          {/* Evaluate Panel */}
+          <div className={`${activePanel === 'evaluation' ? 'block' : 'hidden'} h-full`}>
+            {selectedHome && (
+              <div className="h-full flex flex-col">
+                <div className="flex-1 overflow-y-auto">
+                  <div className="pb-20">
+                    <HomeEvaluationChecklist
+                      key={selectedHome.id}
+                      home={selectedHome}
+                      onSave={handleSaveEvaluation}
+                      initialData={evaluationData[selectedHome.id]}
+                    />
+                    <div className="w-full flex justify-center mt-8 mb-8">
+                      <button
+                        onClick={handleDeleteHome}
+                        className="w-full max-w-xs px-4 py-3 bg-red-600 text-white rounded-md font-semibold shadow hover:bg-red-700 transition"
+                      >
+                        Delete Home
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
-      {/* Bottom Navigation - Mobile Only */}
+      {/* Bottom Navigation */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-50">
         <div className="flex justify-around items-center h-16">
-          <button
-            onClick={() => setActivePanel('list')}
-            className={`flex flex-col items-center justify-center w-full h-full ${
-              activePanel === 'list' ? 'text-indigo-600' : 'text-gray-500'
-            }`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-            </svg>
+          <button onClick={() => setActivePanel('list')} className={`flex flex-col items-center w-full ${activePanel === 'list' ? 'text-blue-600' : 'text-gray-500'}`}>
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
             <span className="text-xs mt-1">Homes</span>
           </button>
-          <button
-            onClick={() => setActivePanel('details')}
-            className={`flex flex-col items-center justify-center w-full h-full ${
-              activePanel === 'details' ? 'text-indigo-600' : 'text-gray-500'
-            }`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-            </svg>
+          <button onClick={() => setActivePanel('details')} className={`flex flex-col items-center w-full ${activePanel === 'details' ? 'text-blue-600' : 'text-gray-500'}`}>
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
             <span className="text-xs mt-1">Details</span>
           </button>
-          <button
-            onClick={() => setActivePanel('checklist')}
-            className={`flex flex-col items-center justify-center w-full h-full ${
-              activePanel === 'checklist' ? 'text-indigo-600' : 'text-gray-500'
-            }`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-            </svg>
+          <button onClick={() => setActivePanel('evaluation')} className={`flex flex-col items-center w-full ${activePanel === 'evaluation' ? 'text-blue-600' : 'text-gray-500'}`}>
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
             <span className="text-xs mt-1">Evaluate</span>
           </button>
         </div>
